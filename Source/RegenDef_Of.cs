@@ -8,10 +8,6 @@ namespace RegeneratorGene
     {
         public static HediffDef Sofis_Regenerating;
 
-        //public static HediffDef Sofis_Hemogen_Regenerating;
-
-        //public static AbilityDef HemogenRegenerate;
-
         static Regen_DefOf()
         {
             DefOfHelper.EnsureInitializedInCtor(typeof(Regen_DefOf));

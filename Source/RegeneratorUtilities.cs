@@ -1,31 +1,12 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using Verse;
+using RimWorld;
 
 namespace RegeneratorGene
 {
     public static class RegeneratorUtilities
     {
-        public static bool TryRegenLimbOnce(Pawn pawn, HediffDef hediffToAdd)
-        {
-            // will only regenerate one limb per day!
-            bool healedOnce = false;
-
-            List<BodyPartRecord> missingBP = GetAllLostBp(pawn);
-
-            if (missingBP.Any())
-            {
-                Hediff_MissingPart removedMissingPartHediff =
-                    GetAnyRemovedMissingPartAfterRegen(pawn, missingBP).FirstOrDefault();
-                if (removedMissingPartHediff != null)
-                {
-                    healedOnce = HealLimb(pawn, removedMissingPartHediff, hediffToAdd);
-                }
-            }
-
-            return healedOnce;
-        }
-
         public static void NaturalRegenerationOfLimbs(Pawn pawn, HediffDef hediffToAdd)
         {
             var toRemove = new List<Hediff>();
@@ -47,6 +28,15 @@ namespace RegeneratorGene
                         {
                             part = part.parent;
                         }
+                    Hediff hediff1 = FindImmunizableHediffWhichCanKill(pawn);
+                    Hediff hediff2 = FindNonInjuryMiscBadHediff(pawn, true);
+                    Hediff hediff3 = FindNonInjuryMiscBadHediff(pawn, false);
+
+                    if (hediff1 != null || hediff2 != null || hediff3 != null)
+                    {
+                        // Add the first non-null Hediff to the toRemove list using the null-coalescing operator (??)
+                        toRemove.Add(hediff1 ?? hediff2 ?? hediff3);
+                    }
 
                     if (flag)
                     {
@@ -68,30 +58,6 @@ namespace RegeneratorGene
 
             foreach (var hediff in toAdd) pawn.health.AddHediff(hediff);
         }
-
-        /*public static bool TryRegenAllLimbsHemogenRecovery(Pawn pawn, HediffDef hediffToAdd)
-        {
-            // will only regenerate one limb per day!
-            bool healedOnce = false;
-
-            List<BodyPartRecord> missingBP = GetAllLostBp(pawn);
-
-            if (missingBP.Any())
-            {
-                List<Hediff_MissingPart> removedMissingPartHediff =
-                    GetAnyRemovedMissingPartAfterRegen(pawn, missingBP);
-                if (removedMissingPartHediff.Count > 0)
-                {
-                    foreach (var part in removedMissingPartHediff)
-                    {
-                        healedOnce = HealLimb(pawn, part, Regen_DefOf.Sofis_Hemogen_Regenerating, true);
-                    }
-                }
-            }
-
-            return healedOnce;
-        }*/
-
         private static List<BodyPartRecord> GetAllLostBp(Pawn pawn)
         {
             var noMissingBP = pawn.health.hediffSet.GetNotMissingParts().ToList();
@@ -142,5 +108,100 @@ namespace RegeneratorGene
             var missingHediffs = pawn.health.hediffSet.hediffs.OfType<Hediff_MissingPart>().ToList();
             return missingHediffs;
         }
+        private static Hediff FindImmunizableHediffWhichCanKill(Pawn pawn)
+		{
+			Hediff hediff = null;
+			float num = -1f;
+			List<Hediff> hediffs = pawn.health.hediffSet.hediffs;
+			for (int i = 0; i < hediffs.Count; i++)
+			{
+				if (hediffs[i].Visible && hediffs[i].def.everCurableByItem)
+				{
+					if (hediffs[i].TryGetComp<HediffComp_Immunizable>() != null)
+					{
+						if (!hediffs[i].FullyImmune())
+						{
+							if (CanEverKill(hediffs[i]))
+							{
+								float severity = hediffs[i].Severity;
+								if (hediff == null || severity > num)
+								{
+									hediff = hediffs[i];
+									num = severity;
+								}
+							}
+						}
+					}
+				}
+			}
+			return hediff;
+		}
+        private static Hediff FindNonInjuryMiscBadHediff(Pawn pawn, bool onlyIfCanKill)
+		{
+			Hediff hediff = null;
+			float num = -1f;
+			List<Hediff> hediffs = pawn.health.hediffSet.hediffs;
+			for (int i = 0; i < hediffs.Count; i++)
+			{
+				if (hediffs[i].Visible && hediffs[i].def.isBad && hediffs[i].def.everCurableByItem)
+				{
+					if (!(hediffs[i] is Hediff_Injury) && !(hediffs[i] is Hediff_MissingPart) && !(hediffs[i] is Hediff_Addiction) && !(hediffs[i] is Hediff_AddedPart))
+					{
+						if (!onlyIfCanKill || CanEverKill(hediffs[i]))
+						{
+							float num2 = (hediffs[i].Part == null) ? 999f : hediffs[i].Part.coverageAbsWithChildren;
+							if (hediff == null || num2 > num)
+							{
+								hediff = hediffs[i];
+								num = num2;
+							}
+						}
+					}
+				}
+			}
+			return hediff;
+		}
+
+        private static void Cure(Hediff hediff)
+		{
+			Pawn pawn = hediff.pawn;
+			pawn.health.RemoveHediff(hediff);
+			if (hediff.def.cureAllAtOnceIfCuredByItem)
+			{
+				int num = 0;
+				while (true)
+				{
+					num++;
+					if (num > 10000)
+					{
+						break;
+					}
+					Hediff firstHediffOfDef = pawn.health.hediffSet.GetFirstHediffOfDef(hediff.def, false);
+					if (firstHediffOfDef == null)
+					{
+						goto Block_3;
+					}
+					pawn.health.RemoveHediff(firstHediffOfDef);
+				}
+				Log.Error("Too many iterations.", false);
+				Block_3:;
+			}
+			Messages.Message("MessageHediffCuredByItem".Translate(hediff.LabelBase.CapitalizeFirst()), pawn, MessageTypeDefOf.PositiveEvent, true);
+		}
+
+        private static bool CanEverKill(Hediff hediff)
+		{
+			if (hediff.def.stages != null)
+			{
+				for (int i = 0; i < hediff.def.stages.Count; i++)
+				{
+					if (hediff.def.stages[i].lifeThreatening)
+					{
+						return true;
+					}
+				}
+			}
+			return hediff.def.lethalSeverity >= 0f;
+		}
+		}
     }
-}
